@@ -1,0 +1,100 @@
+Nastaveni hwclock
+1)pridani vyvoreni i2c device po startu /etc/rc.local 
+  echo ds1307 0x68 > /sys/class/i2c-adapter/i2c-1/new_device
+  hwclock -s
+  exit 0
+ 
+2)pridani radku do /etc/modules 
+  rtc-ds1307
+3)vytvoreni scriptu pro aktualizaci hwclocku z ntp /usr/sbin/hwclock-ntp
+
+#!/bin/bash
+
+# Location of logfile
+LOGFILE="/var/log/ntplog.log"
+
+if [ ! -f $LOGFILE ]; then
+  touch $LOGFILE
+fi
+
+# Set the maximum allowed difference in seconds between Hw-Clock and Sys-Clock
+maxDiffSec="1"
+
+msgNoConnection="No connection to time-server"
+msgConnection="Connection to time-server"
+
+# Check for NTP connection
+if ( ntpq -p | grep -q "^*"  ); then
+        echo $msgConnection
+        echo "---------------------------------"
+
+        secHwClock=$(sudo hwclock --debug | grep "^Hw clock time" | awk '{print $(NF-3)}')
+        echo "HwClock: $secHwClock sec"
+
+        secSysClock=$(date +"%s")
+        echo "SysClock: $secSysClock sec"
+        echo "---------------------------------"
+
+        secDiff=$(($secHwClock-$secSysClock))
+
+        # Compute absolute value
+        if ( echo $secDiff | grep -q "-" ); then
+            secDiff=$(echo $secDiff | cut -d "-" -f 2)
+        fi
+
+        echo "Difference: $secDiff sec"
+
+        msgDiff="HwClock difference: $secDiff sec"
+        if [ "$secDiff" -gt "$maxDiffSec" ] ; then
+                echo "---------------------------------"
+                echo "The difference between Hw- and Sys-Clock is more than $maxDiffSec sec."
+                echo "Hw-Clock will be updated"
+
+                # Update hwclock from system clock
+                sudo hwclock -w
+                msgDiff="$msgDiff --> HW-Clock updated."
+        fi
+        if !(awk '/./{line=$0} END{print line}' $LOGFILE | grep -q "$msgConnection") || [ "$secDiff" -gt "$maxDiffSec" ]; then
+                echo $(date)": "$msgConnection". "$msgDiff >> $LOGFILE
+        fi
+else
+        # No NTP connection
+        echo $msgNoConnection
+        if !(awk '/./{line=$0} END{print line}' $LOGFILE | grep -q "$msgNoConnection"); then
+                echo $(date)": $msgNoConnection" >> $LOGFILE
+        fi
+fi
+
+
+
+4)pridani scriptu do cronu
+* * * * * /usr/sbin/hwclock_ntp > /dev/null
+
+
+
+5) apache
+sudo apt-get install apache2 
+echo "ServerName localhost" | sudo tee /etc/apache2/conf.d/fqdn
+
+6) php5
+apt-get install php5 libapache2-mod-php5
+sudo apt-get install php5-mysql
+
+
+5) nastaveni prav uzivatele pro editaci www stranek
+sudo adduser <username> www-data
+sudo chown -R www-data:www-data /var/www
+sudo chmod -R g+rw /var/www
+
+6) nastaveni apache pro pouziti .htaccess
+sudo apt-get install a2enmod rewrite
+sudo nano /etc/apache2/sites-available/default
+<Directory /var/www/>
+       Options Indexes FollowSymLinks MultiViews
+       AllowOverride All
+       Order allow,deny
+       allow from all
+       # Uncomment this directive is you want to see apache2's
+       # default start page (in /apache2-default) when you go to /
+ 	#RedirectMatch ^/$ /apache2-default/
+ </Directory>
